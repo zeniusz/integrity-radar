@@ -108,6 +108,7 @@ table{width:100%;border-collapse:collapse}
 .mtable .srcn i{width:10px;height:10px;border-radius:50%}
 .mtable .det{color:var(--ink2);font-size:12.5px}
 .up,.down{color:var(--ink);font-weight:600}
+.hit{color:var(--pitch);font-weight:600}.miss{color:var(--red);font-weight:600}
 .up::before{content:"▲ ";font-size:10px;color:var(--ink3)}.down::before{content:"▼ ";font-size:10px;color:var(--ink3)}
 .spread{margin:10px 0 0;font-size:13px;color:var(--ink2)}
 .spread b{color:var(--ink)}
@@ -647,9 +648,9 @@ function renderBacktest(d){
           <td>${esc(m.date)}</td><td class="fx">${esc(m.home)} v ${esc(m.away)}</td><td>${OUT[k]}</td>
           <td>${pct(m.open[k])} → ${pct(m.close[k])}</td><td class="big ${m.driftPP > 0 ? 'up' : 'down'}">${ppS(m.driftPP)}</td>
           <td>${m.dispersion != null ? m.dispersion.toFixed(1) + '%' : '–'}</td>
-          <td>${esc(m.score)} ${m.driftPP > 0 ? (won ? '<span class="up">happened</span>' : '<span class="down">didn’t</span>') : ''}</td></tr>`; }).join('')}
+          <td>${esc(m.score)} ${m.driftPP > 0 ? (won ? '<span class="hit">happened</span>' : '<span class="miss">didn’t</span>') : ''}</td></tr>`; }).join('')}
       </tbody></table>
-      <p class="lead" style="margin:10px 0 0">The tilted cards show how unusual each move was, in standard deviations: yellow from 2, red from 3.</p></div>`;
+      <p class="lead" style="margin:10px 0 0">The cards show how unusual each move was, in standard deviations: yellow from 2, red from 3.</p></div>`;
 }
 
 function histSVG(d){
