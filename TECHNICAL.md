@@ -14,22 +14,43 @@ Then open http://localhost:8765.
 
 ## How the score works
 
-Every price is turned into a win probability for the home team, with the bookmaker's margin removed. The app then checks six signals, using pre-match trading only:
+Every price is turned into a win probability for the home team, with the bookmaker's margin removed. Each case gets three separate outputs:
 
-| Signal | Fires when | Notes |
+- **Review priority (0–100)**: which case to look at first. **Review** from 20, **Escalate** from 45. It is *not* a probability of match-fixing.
+- **Data quality (high / medium / low)**: whether the evidence can be trusted (quote freshness, spreads, liquidity, match confidence, missing opening lines).
+- **Explanation (pending / explained / unexplained)**: set by the analyst's decision.
+
+Signals, using pre-match trading only:
+
+| Signal | Fires when | Context adjustments |
 |---|---|---|
-| Markets disagree | Polymarket and the bookmaker differ by 3pp or more | Weighted by Polymarket volume |
-| Bookmaker line moved | DraftKings moved 4pp or more since opening | |
-| Polymarket moved | 5pp or more over 24 hours before kickoff | Weighted by volume |
-| Sharp jump | 6pp or more inside a two-hour window | Weighted by volume |
-| Bookmaker didn't follow | Polymarket moved 5pp+ while DraftKings moved under 2pp | |
-| Kalshi disagrees | Kalshi and Polymarket differ by 6pp or more | |
+| Markets disagree | Polymarket and the bookmaker differ by 3pp+ | Suppressed if the Polymarket quote is stale (no trade for 3h) or its spread is over 6¢. Discounted because ESPN publishes no quote time |
+| Kalshi disagrees | Kalshi and Polymarket differ by 6pp+ | Same suppression. Kalshi needs a two-sided quote no wider than 10¢; last trades are never used as a price |
+| Bookmaker line moved | DraftKings moved 4pp+ (even-odds equivalent) since opening | Only when a genuine opening line exists |
+| Polymarket moved | 5pp+ (even-odds equivalent) over 24h | Needs 20h+ of history; reports the actual window. With 30+ collected fixtures in the league, fires only above the league's 90th percentile instead |
+| Sharp jump | 6pp+ inside a two-hour window | |
+| Bookmaker didn't follow | Polymarket moved 5pp+ while DraftKings moved under 2pp | Both measured over the same window, using the collector's bookmaker snapshots |
 
-"pp" means percentage points: a move from 50% to 55% is 5pp. Signals from Polymarket count for less when little money has been traded (under $25k counts about a third, under $100k about 60%). Scores are capped at 100. **Review** from 20, **Escalate** from 45. The thresholds are set by hand for this prototype.
+- **Probability range**: moves are measured in log-odds and expressed as "pp at even odds", so 85%→90% counts more than 50%→55%.
+- **Time before start**: movement signals count 70% inside 2h of the start and 85% inside 6h, when lineup news routinely moves prices.
+- **Liquidity**: Polymarket signals are weighted by volume (under $25k about a third, under $100k about 60%).
+- **Correlated signals**: in each group (disagreement; movement) the strongest counts in full and the rest at half.
+
+Thresholds are still hand-set for this prototype; the league baseline replaces the fixed movement threshold as history accumulates.
+
+## Monitoring and storage
+
+`server.py` runs a background collector that builds every league every 5 minutes (`IR_COLLECT_EVERY`, seconds; `0` disables) and writes to `data/integrity.db` (SQLite; `IR_DB` overrides the path):
+
+- `snapshots`: prices, score and signals per fixture per run
+- `signals`: when each signal was first and last seen, and its peak size
+- `events`: analyst decisions. Immutable (SQLite triggers block updates and deletes); each row keeps the action, rationale, and the score, signals and evidence *at the moment of the decision*
+
+Case statuses: `new` → `investigating` (first checklist tick) → `monitoring` / `dismissed` / `escalated`. Only dismissed and escalated count as resolved; monitored cases stay active.
 
 ## API
 
-`server.py` serves the page and a small JSON API on `http://localhost:8765`. The page uses only these two endpoints, so you can also call them from scripts or notebooks.
+`server.py` serves the page and a small JSON API on `http://localhost:8765`. You can also call the endpoints from scripts or notebooks.
 
 ### `GET /api/live?league={nba|nfl|nhl}`
 
@@ -78,14 +99,31 @@ Abbreviated response (one game shown):
 | `pm.move24`, `pm.maxJump` | Change over the 24 hours before kickoff, and the largest move inside any two-hour window |
 | `kalshi.homeNow` | Midpoint of Kalshi's bid and ask for the home team |
 | `divergence`, `bookMove`, `kalshiGap` | Differences in percentage points (pp) |
-| `score`, `level` | 0–100 review score; `normal` below 20, `watch` from 20, `alert` from 45 |
+| `score`, `level` | 0–100 review priority; `normal` below 20, `watch` from 20, `alert` from 45 |
+| `dataQuality` | `{grade, issues}` |
+| `missing` | Per source: `not listed`, `source unavailable`, `ambiguous (...)`, or why a listed quote was unusable |
+| `pm.quoteAge`, `pm.spread`, `pm.move` | Seconds since last trade, bid-ask spread, and the 24h move with its real window (`windowH`, `covered`) |
+| `signalHistory`, `case` | First-seen times from the collector; case status and its decision events |
+| `sources` | Per source: `ok`, `partial`, `error`, `fetchedAt` |
 | `reasons` | The signals behind the score, each with its size (`pp`) and points added (`pts`) |
 
-A missing `book`, `pm` or `kalshi` object means that market doesn't list the fixture.
+A missing `book`, `pm` or `kalshi` object means there is no usable price; `missing` says why.
 
-### `GET /api/backtest?div={E0|D1|SP1|I1|F1}&season={YYYY}`
+### `POST /api/decision`
 
-One soccer season's opening vs closing odds. `div` is the league (Premier League, Bundesliga, La Liga, Serie A, Ligue 1) and `season` is four digits, e.g. `2526` for 2025/26.
+Body: `{"caseId": "nba-401909296", "action": "investigate|monitor|dismiss|escalate", "rationale": "...", "snapshot": {...}}`. Appends an immutable event and returns the case's status and events.
+
+### `GET /api/decisions.csv`
+
+Every decision event, with the score, signals and evidence recorded at the time.
+
+### `GET /api/evaluation`
+
+Detector behaviour from collected data: fixtures seen, flagged and escalate-level per 100 fixtures, analyst outcomes, and dismissed share (a rough false-alert rate).
+
+### `GET /api/history?div={E0|D1|SP1|I1|F1}&season={YYYY}`
+
+Historical market analysis (formerly `/api/backtest`, which still works): one soccer season's opening vs closing odds. This is market context; it does not validate the live detector. `div` is the league (Premier League, Bundesliga, La Liga, Serie A, Ligue 1) and `season` is four digits, e.g. `2526` for 2025/26.
 
 ```bash
 curl "http://localhost:8765/api/backtest?div=E0&season=2526"
@@ -113,16 +151,32 @@ These are unofficial or public endpoints and may change without notice. The serv
 
 ## Limits
 
-- ESPN shows one bookmaker's opening and current line, not its full history.
+- ESPN shows one bookmaker's opening and current line with no quote timestamps; bookmaker history exists only from the collector's own snapshots.
 - Polymarket history is sampled every 30 minutes; Kalshi shows current quotes only.
-- Analyst decisions are stored in the browser only (exportable as CSV).
+- Team news is not connected; the evidence timeline marks it as unverified.
+
+## Tests
+
+```bash
+python -m unittest discover tests
+```
+
+Covers price conversion, matching (aliases, ambiguity, dates), scoring boundaries, missing opening lines, stale and wide quotes, partial history, same-window comparison, correlated signals, league baselines, case-state transitions, immutable decision events and source failures. Upstream APIs are mocked.
 
 ## Project structure
 
 ```
-server.py      Data fetching, fixture matching, scoring, local web server (standard library only)
-index.html     Single-page interface (no build step)
-DESIGN.md      Visual design plan
-TECHNICAL.md   This page
-docs/          Screenshots used in the README
+server.py          Web server, JSON API, background collector
+radar/net.py       HTTP fetch with cache
+radar/odds.py      Price conversion, margin removal, log-odds moves
+radar/sources.py   ESPN, Polymarket, Kalshi clients with source status
+radar/matching.py  Unique fixture matching with confidence
+radar/scoring.py   Signals, priority, data quality
+radar/live.py      Builds the scored live view
+radar/storage.py   SQLite snapshots, signal history, decision events, evaluation
+radar/history.py   Historical market analysis (football-data.co.uk)
+tests/             Offline unit tests
+index.html         Single-page interface (no build step)
+DESIGN.md          Visual design plan
+docs/              Screenshots used in the README
 ```

@@ -15,7 +15,7 @@ Integrity Radar watches both. For every NBA, NFL and NHL game today and tomorrow
 1. **Collects the prices** from Polymarket, Kalshi and the bookmaker DraftKings.
 2. **Turns them into a simple number**: the chance each market gives the home team to win (for example, 32%).
 3. **Looks for anything odd**, such as the markets disagreeing, a price jumping sharply within a couple of hours, or one market moving while the others don't.
-4. **Gives each game a score from 0 to 100** and lists the games worth a closer look first.
+4. **Gives each game a review priority from 0 to 100** and a data-quality grade, and lists the games worth a closer look first. Stale or non-comparable prices are not scored.
 5. **Explains the score in plain words** and suggests innocent reasons, like an injury announcement.
 6. **Lets the analyst decide**: dismiss it, keep watching, or escalate it.
 
@@ -31,11 +31,11 @@ Sports integrity analysts: the people at leagues, data companies and regulators 
 
 Colour works like a referee's card: a **yellow card** means "worth a review" and a **red card** means "escalate".
 
-**Recording a decision.** Here an analyst checked a big price move on an NFL game, found it was explained by the starting quarterback being ruled out, and dismissed it with a note. Every decision is kept with its reason and time.
+**Recording a decision.** Here an analyst checked a big price move on an NFL game, found it was explained by the starting quarterback being ruled out, and dismissed it with a note. Every decision is kept, unchangeable, with its reason, its time and the evidence as it stood at that moment.
 
 ![An analyst dismissing a flagged NFL game with a written reason](docs/decision.jpg)
 
-**Learning from past seasons.** The backtest page uses five European football leagues to show how much prices normally move before kickoff, so you know what "unusual" looks like. It also checks whether late price moves turned out to be right.
+**Learning from past seasons.** The historical analysis page uses five European football leagues to show how much prices normally move before kickoff, so you know what "unusual" looks like. It also checks whether late price moves turned out to be right. This is market context, not proof that the live detector works; the detector evaluation table below it tracks alert volume and analyst outcomes from the app's own collected data.
 
 ![Chart of how far prices move before kickoff, and a table on whether late moves were right](docs/backtest.jpg)
 
@@ -52,7 +52,9 @@ You need [Python](https://www.python.org/downloads/) installed (version 3.9 or n
    ```
 3. Open **http://localhost:8765** in your browser.
 
-Prices are live, so what you see depends on which games are on today.
+Prices are live, so what you see depends on which games are on today. While the server runs, it saves a snapshot every 5 minutes to `data/integrity.db`, which builds the history behind first-seen times and league baselines. The page refreshes itself every 2 minutes (pause it from the status bar).
+
+Run the tests with `python -m unittest discover tests`.
 
 ## Where the data comes from
 
@@ -67,7 +69,7 @@ All free and public:
 This is a prototype built with public data. With professional data feeds, the next steps would be to:
 
 - Add the exact time of team news, so moves caused by injuries explain themselves
-- Learn better thresholds from analysts' past decisions
+- Learn thresholds from analysts' past decisions (the league baseline from collected snapshots is a first step)
 - Have AI draft the case summary for the analyst (written from fixed templates today)
 - Cover football's three-way markets (home, draw, away) live
 
