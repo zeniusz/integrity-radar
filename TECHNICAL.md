@@ -157,9 +157,9 @@ These are unofficial or public endpoints and may change without notice. The serv
 - Team news is not connected; the evidence timeline marks it as unverified.
 - The price chart shows Polymarket history plus bookmaker and Kalshi prices from the collector's snapshots. Dots are observations, lines between them are interpolated, dashed segments cross gaps of over 90 minutes. Volume history is not available from these sources.
 
-## Deployment
+## Configuration
 
-`render.yaml` deploys the server on Render's free tier. Environment variables:
+Optional environment variables:
 
 | Variable | Default | Purpose |
 |---|---|---|
