@@ -359,6 +359,7 @@ function renderStrip(){
     <div class="src">${src('polymarket', 'pm', 'Polymarket', c.polymarket)}${src('espn', 'book', 'DraftKings', c.book)}${src('kalshi', 'kal', 'Kalshi', c.kalshi)}</div>
     <div class="grow"></div>
     <span class="quiet" title="Each source was fetched at this time">Updated ${new Date(d.generated).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} · ${state.paused ? 'auto-refresh paused' : 'auto-refresh every 2 min'}</span>
+    ${d.readonly ? '<span class="quiet" title="Run locally to record decisions">Public view · read-only</span>' : ''}
     <button class="btn" id="pause">${state.paused ? 'Resume' : 'Pause'}</button>
     <button class="btn" id="refresh">Refresh</button>
     <button class="btn" id="export">Export decisions</button>`;
@@ -691,7 +692,8 @@ function renderCase(g){
     <h4>Investigation checklist</h4>
     <ul class="checks">${s.checks.map((c, i) => `<li><label><input type="checkbox" data-c="${i}" ${ck[i] ? 'checked' : ''}> ${esc(c)}</label></li>`).join('')}</ul>` : ''}
     </div>
-    <div class="case-foot">
+    ${state.data.readonly ? `<div class="case-foot"><h4>Analyst decision <span class="info" style="font-weight:400">· ${STATUS[st].toLowerCase()}</span></h4>
+      <p class="info" style="margin:0">Public live view, read-only. Clone the repo and run <b>python server.py</b> to record decisions.</p></div>` : `<div class="case-foot">
       <h4>Analyst decision <span class="info" style="font-weight:400">· ${STATUS[st].toLowerCase()}</span></h4>
       <textarea id="rvNote" placeholder="Why? e.g. starter ruled out at 18:40" aria-label="Decision rationale">${esc(draft)}</textarea>
       <div class="decide">
@@ -700,9 +702,10 @@ function renderCase(g){
         <button data-d="escalate" class="${st === 'escalated' ? 'on' : ''}">Escalate case</button>
       </div>
       <p class="info" id="decErr" style="margin:6px 0 0"></p>
-    </div>
+    </div>`}
   </div>`;
 
+  if (state.data.readonly) { $$('#case .checks input, #case .expl select').forEach(el => el.disabled = true); return; }
   $('#rvNote').oninput = e => { state.drafts[g.id] = e.target.value; };
   $$('#case .expl select').forEach(sel => sel.onchange = () => {
     const m = explains[g.caseId] ||= {};

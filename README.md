@@ -56,6 +56,16 @@ Prices are live, so what you see depends on which games are on today. While the 
 
 Run the tests with `python -m unittest discover tests`.
 
+## Put it online
+
+The repo includes a `render.yaml` for [Render](https://render.com)'s free tier:
+
+1. Sign in to Render with GitHub.
+2. **New → Blueprint**, pick this repository, and confirm.
+3. After a minute or two the live app is at `https://integrity-radar.onrender.com` (or the name Render gives it).
+
+The public version is **read-only**: visitors see live prices, scores and recorded decisions, but can't add decisions. On the free tier the app sleeps after about 15 minutes without visitors (the first visit then takes around 30 seconds), and its database resets when it restarts.
+
 ## Where the data comes from
 
 All free and public:

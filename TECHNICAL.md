@@ -157,6 +157,20 @@ These are unofficial or public endpoints and may change without notice. The serv
 - Team news is not connected; the evidence timeline marks it as unverified.
 - The price chart shows Polymarket history plus bookmaker and Kalshi prices from the collector's snapshots. Dots are observations, lines between them are interpolated, dashed segments cross gaps of over 90 minutes. Volume history is not available from these sources.
 
+## Deployment
+
+`render.yaml` deploys the server on Render's free tier. Environment variables:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PORT` | `8765` | Port to listen on (set by the host) |
+| `HOST` | `127.0.0.1` | `0.0.0.0` when hosted |
+| `IR_READONLY` | `0` | `1` makes `POST /api/decision` return 403 and hides decision controls |
+| `IR_COLLECT_EVERY` | `300` | Collector interval in seconds, `0` disables |
+| `IR_DB` | `data/integrity.db` | SQLite path |
+
+`GET /healthz` returns `{"ok": true}` for the host's health check.
+
 ## Tests
 
 ```bash

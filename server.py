@@ -12,6 +12,7 @@ so signals get a first-seen time and the bookmaker can be compared over the same
 
 Run:  python server.py   then open http://localhost:8765
 Env:  IR_COLLECT_EVERY=300 (seconds, 0 disables)  IR_DB=path/to.db
+      PORT, HOST (0.0.0.0 in the cloud)  IR_READONLY=1 (block new decisions)
 """
 import json
 import os
@@ -27,7 +28,10 @@ from radar.history import FD_LEAGUES, build_history
 from radar.live import build_live
 from radar.sources import LEAGUES
 
-PORT = 8765
+PORT = int(os.environ.get("PORT", "8765"))
+HOST = os.environ.get("HOST", "127.0.0.1")
+# Public deployments: visitors can read cases and decisions but not record new ones.
+READONLY = os.environ.get("IR_READONLY", "0") == "1"
 ROOT = Path(__file__).parent
 COLLECT_EVERY = int(os.environ.get("IR_COLLECT_EVERY", "300"))
 _live_lock = threading.Lock()  # one build at a time keeps snapshots ordered
@@ -36,6 +40,7 @@ _live_lock = threading.Lock()  # one build at a time keeps snapshots ordered
 def live(league):
     with _live_lock:
         d = build_live(league)
+    d["readonly"] = READONLY
     st = storage.statuses(league)
     for g in d["games"]:
         s = st.get(g["caseId"])
@@ -91,6 +96,8 @@ class Handler(SimpleHTTPRequestHandler):
                 if div not in FD_LEAGUES or not re.fullmatch(r"\d{4}", season):
                     return self._json({"error": "bad params"}, 400)
                 return self._json(build_history(div, season))
+            if u.path == "/healthz":
+                return self._json({"ok": True})
             if u.path == "/api/evaluation":
                 return self._json(storage.evaluation())
             if u.path == "/api/decisions.csv":
@@ -104,6 +111,8 @@ class Handler(SimpleHTTPRequestHandler):
         u = urllib.parse.urlparse(self.path)
         if u.path != "/api/decision":
             return self._json({"error": "not found"}, 404)
+        if READONLY:
+            return self._json({"error": "This public demo is read-only. Run it locally to record decisions."}, 403)
         try:
             n = int(self.headers.get("Content-Length") or 0)
             body = json.loads(self.rfile.read(min(n, 200_000)) or b"{}")
@@ -120,5 +129,5 @@ class Handler(SimpleHTTPRequestHandler):
 if __name__ == "__main__":
     if COLLECT_EVERY > 0:
         threading.Thread(target=collector, daemon=True).start()
-    print(f"Integrity Radar running on http://localhost:{PORT}")
-    ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+    print(f"Integrity Radar running on http://{HOST}:{PORT}{' (read-only)' if READONLY else ''}", flush=True)
+    ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
