@@ -31,7 +31,7 @@ Sports integrity analysts: the people at leagues, data companies and regulators 
 
 Colour works like a referee's card: a **yellow card** means "worth a review" and a **red card** means "escalate".
 
-**Recording a decision.** Here an analyst checked a big price move on an NFL game, found it was explained by the starting quarterback being ruled out, and dismissed it with a note. Every decision is kept, unchangeable, with its reason, its time and the evidence as it stood at that moment.
+**Recording a decision.** Here an analyst reviewed a flagged NFL game, marked team news as a confirmed explanation, and dismissed it with a written reason, which now sits on the case's evidence timeline next to when the signal was first seen. (The note in the screenshot is an example, not a real finding.) Every decision is kept, unchangeable, with its reason, its time and the evidence as it stood at that moment.
 
 ![An analyst dismissing a flagged NFL game with a written reason](docs/decision.jpg)
 
