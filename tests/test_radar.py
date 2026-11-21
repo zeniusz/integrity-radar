@@ -241,6 +241,9 @@ class Storage(unittest.TestCase):
         sh = storage.signal_history("nba-1", path=self.db)[0]
         self.assertEqual(sh["first_seen"], NOW - 20 * 3600)
         self.assertEqual(sh["peak_pp"], 9.0)
+        ser = storage.series("nba-1", now=NOW, path=self.db)
+        self.assertEqual([r[2] for r in ser], [0.40, 0.41])
+        self.assertIsNone(ser[0][3])  # no Kalshi observation stays None, not 0
         bw = storage.book_window_move("nba-1", 24 * 3600, now=NOW, path=self.db)
         self.assertAlmostEqual(bw["pp"], 1.0)
         self.assertAlmostEqual(bw["windowH"], 20)

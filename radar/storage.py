@@ -91,6 +91,15 @@ def book_window_move(cid, window_s, now=None, path=None):
     return {"pp": (last["book"] - first["book"]) * 100, "windowH": (last["t"] - first["t"]) / 3600}
 
 
+def series(cid, since_s=7 * 86400, now=None, path=None):
+    """Observed prices per collector run: [[t, pm, book, kalshi], ...]. None = no observation."""
+    now = now or time.time()
+    with connect(path) as con:
+        rows = con.execute("SELECT t, pm, book, kalshi FROM snapshots WHERE case_id=? AND t>=? ORDER BY t",
+                           (cid, now - since_s)).fetchall()
+    return [[r["t"], r["pm"], r["book"], r["kalshi"]] for r in rows]
+
+
 def signal_history(cid, path=None):
     with connect(path) as con:
         return [dict(r) for r in con.execute(

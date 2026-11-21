@@ -18,7 +18,7 @@ Every price is turned into a win probability for the home team, with the bookmak
 
 - **Review priority (0–100)**: which case to look at first. **Review** from 20, **Escalate** from 45. It is *not* a probability of match-fixing.
 - **Data quality (high / medium / low)**: whether the evidence can be trusted (quote freshness, spreads, liquidity, match confidence, missing opening lines).
-- **Explanation (pending / explained / unexplained)**: set by the analyst's decision.
+- **Explanation**: from the analyst's structured assessment of each possible legitimate cause (injury or lineup news, public news, weather for NFL, thin market, stale quote...), each marked Confirmed, Possible, No evidence found, Insufficient information or Not checked. Any confirmed cause makes the case "Explained". The assessments are saved with every decision.
 
 Signals, using pre-match trading only:
 
@@ -103,6 +103,7 @@ Abbreviated response (one game shown):
 | `dataQuality` | `{grade, issues}` |
 | `missing` | Per source: `not listed`, `source unavailable`, `ambiguous (...)`, or why a listed quote was unusable |
 | `pm.quoteAge`, `pm.spread`, `pm.move` | Seconds since last trade, bid-ask spread, and the 24h move with its real window (`windowH`, `covered`) |
+| `series` | Observed prices per collector run, `[t, polymarket, bookmaker, kalshi]`, `null` where not observed |
 | `signalHistory`, `case` | First-seen times from the collector; case status and its decision events |
 | `sources` | Per source: `ok`, `partial`, `error`, `fetchedAt` |
 | `reasons` | The signals behind the score, each with its size (`pp`) and points added (`pts`) |
@@ -154,6 +155,7 @@ These are unofficial or public endpoints and may change without notice. The serv
 - ESPN shows one bookmaker's opening and current line with no quote timestamps; bookmaker history exists only from the collector's own snapshots.
 - Polymarket history is sampled every 30 minutes; Kalshi shows current quotes only.
 - Team news is not connected; the evidence timeline marks it as unverified.
+- The price chart shows Polymarket history plus bookmaker and Kalshi prices from the collector's snapshots. Dots are observations, lines between them are interpolated, dashed segments cross gaps of over 90 minutes. Volume history is not available from these sources.
 
 ## Tests
 

@@ -269,7 +269,7 @@ const ppS = x => x == null ? '–' : (x > 0 ? '+' : x < 0 ? '−' : '') + Math.a
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money = v => v >= 1e6 ? '$' + (v/1e6).toFixed(1) + 'M' : v >= 1e3 ? '$' + Math.round(v/1e3) + 'k' : '$' + Math.round(v);
 const dayTime = t => new Date(t).toLocaleString([], {weekday:'short', hour:'2-digit', minute:'2-digit'});
-const LEVEL = {alert:'Escalate', watch:'Review', normal:'Clear'};
+const LEVEL = {alert:'Urgent review', watch:'Review recommended', normal:'No threshold crossed'};
 
 function countdown(g){
   if (g.state === 'in') return 'Live';
@@ -291,6 +291,10 @@ const RESOLVED = new Set(['dismissed', 'escalated']);
 const ACTION = {dismiss:'dismissed', monitor:'monitoring', escalate:'escalated', investigate:'investigating'};
 const status = g => g.case?.status || 'new';
 const flagged = g => g.level !== 'normal';
+const LSE = 'ir-explain-v1';
+const ASSESS = {unchecked:'Not checked', confirmed:'Confirmed', possible:'Possible', none:'No evidence found', insufficient:'Insufficient information'};
+let explains = (() => { try { return JSON.parse(localStorage.getItem(LSE)) || {}; } catch { return {}; } })();
+const saveExplains = () => { try { localStorage.setItem(LSE, JSON.stringify(explains)); } catch {} };
 const LSC = 'ir-checks-v3';
 let checks = (() => { try { return JSON.parse(localStorage.getItem(LSC)) || {}; } catch { return {}; } })();
 const saveChecks = () => { try { localStorage.setItem(LSC, JSON.stringify(checks)); } catch {} };
@@ -351,7 +355,7 @@ function renderStrip(){
   $('#strip').innerHTML = `
     <div class="stat"><b>${n}</b><span>fixtures</span></div>
     <div class="stat"><b style="color:${open ? '#9A7A00' : 'var(--pitch)'}">${open}</b><span>need attention</span></div>
-    <div class="stat"><b style="color:${g.some(x => x.level === 'alert') ? 'var(--red)' : 'var(--ink)'}">${g.filter(x => x.level === 'alert').length}</b><span>to escalate</span></div>
+    <div class="stat"><b style="color:${g.some(x => x.level === 'alert') ? 'var(--red)' : 'var(--ink)'}">${g.filter(x => x.level === 'alert').length}</b><span>urgent review</span></div>
     <div class="src">${src('polymarket', 'pm', 'Polymarket', c.polymarket)}${src('espn', 'book', 'DraftKings', c.book)}${src('kalshi', 'kal', 'Kalshi', c.kalshi)}</div>
     <div class="grow"></div>
     <span class="quiet" title="Each source was fetched at this time">Updated ${new Date(d.generated).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} · ${state.paused ? 'auto-refresh paused' : 'auto-refresh every 2 min'}</span>
@@ -366,6 +370,10 @@ function renderStrip(){
 const LABELS = {divergence:'Markets disagree', book_move:'Bookmaker line moved', pm_move:'Polymarket moved',
   pm_jump:'Sharp jump', unconfirmed:'Bookmaker didn’t follow', kalshi_gap:'Kalshi disagrees', thin:'Thin market',
   suppressed:'Gap ignored'};
+// What each signal measures and the line it has to cross, shown beside its contribution.
+const THRESH = {divergence:'Polymarket vs bookmaker now · fires at 3pp', kalshi_gap:'Kalshi vs Polymarket now · fires at 6pp',
+  book_move:'Bookmaker since opening · fires at 4pp at even odds', pm_move:'Polymarket over ~24h · fires at 5pp at even odds',
+  pm_jump:'Polymarket, any 2-hour window in the last 48h · fires at 6pp', unconfirmed:'Polymarket 5pp+ while bookmaker moved under 2pp, same window'};
 const signals = g => g.reasons.filter(r => 'pts' in r).sort((a, b) => b.pts - a.pts);
 const primary = g => signals(g)[0];
 
@@ -466,8 +474,8 @@ function renderEvidence(g){
       ${cls === 'home' && t.logo ? `<img src="${esc(t.logo)}" alt="">` : ''}</div>`;
   const pmNow = g.state !== 'pre' && g.pm?.preMatchClose != null ? g.pm.preMatchClose : g.pm?.homeNow;
   const rows = [];
-  if (g.pm) rows.push(['pm', 'Polymarket', pmNow, g.pm.move24 != null ? g.pm.move24 * 100 : null, '24h',
-    `${money(g.pm.volume)} traded${g.state !== 'pre' ? ', price at kickoff' : ''}`, g.pm.url]);
+  if (g.pm) rows.push(['pm', 'Polymarket', pmNow, g.pm.move24 != null ? g.pm.move24 * 100 : null, g.pm.move ? `over ${Math.round(g.pm.move.windowH)}h` : '',
+    `${money(g.pm.volume)} traded volume (USD)${g.state !== 'pre' ? ', price at kickoff' : ''}`, g.pm.url]);
   if (g.pm) rows[0][5] += g.pm.stale ? ` · <b>stale</b>, last trade ${fmtT(g.pm.lastTradeAt)}` : g.pm.lastTradeAt ? ` · last trade ${fmtT(g.pm.lastTradeAt)}` : '';
   if (g.pm?.move && !g.pm.move.covered) rows[0][3] = null;
   if (g.book) rows.push(['book', g.book.provider, g.book.homeNow, g.book.homeOpen != null ? (g.book.homeNow - g.book.homeOpen) * 100 : null, 'since open',
@@ -484,35 +492,43 @@ function renderEvidence(g){
     <div class="bugmeta"><span>${state.data.league.toUpperCase()} <b>${g.state === 'pre' ? 'Starts ' + dayTime(g.start) : esc(g.statusText || '')}</b></span>
       <span>Probabilities are for <b>${esc(g.home.name)}</b> to win</span></div>
     <div class="ev-body">
-      <table class="mtable"><thead><tr><th>Market</th><th>Win probability</th><th>Movement</th><th>Detail</th></tr></thead><tbody>
+      <table class="mtable"><thead><tr><th>Market</th><th>${esc(g.home.name)} win probability</th><th>Probability movement</th><th>Detail</th></tr></thead><tbody>
       ${rows.map(([c, n, v, mv, win, det, url]) => `<tr>
         <td><span class="srcn"><i style="background:var(--${c})"></i>${esc(n)}</span></td>
         <td class="p">${pct(v)}</td>
-        <td>${mv == null ? '<span class="quiet">–</span>' : `<span class="${mv > 0.05 ? 'up' : mv < -0.05 ? 'down' : ''}">${ppS(mv)}</span> <span class="quiet">${win}</span>`}</td>
+        <td>${mv == null ? `<span class="quiet">${c === 'kal' ? 'no history from source' : c === 'pm' && g.pm?.move && !g.pm.move.covered ? `only ${Math.round(g.pm.move.windowH)}h of history` : c === 'book' ? 'no opening line' : 'not measured'}</span>` : `<span class="${mv > 0.05 ? 'up' : mv < -0.05 ? 'down' : ''}">${ppS(mv)}</span> <span class="quiet">${win}</span>`}</td>
         <td class="det">${det}${url ? ` <a href="${url}" target="_blank" rel="noopener">View market</a>` : ''}</td></tr>`).join('')}
       </tbody></table>
-      <p class="spread">${spread != null ? `Gap between markets: <b>${spread.toFixed(1)}pp</b>.` : 'Only one market prices this fixture, so there is nothing to compare yet.'}
+      <p class="spread">${spread != null ? `Cross-market probability difference: <b>${spread.toFixed(1)} percentage points (pp)</b>.` : 'Only one market prices this fixture, so there is nothing to compare yet.'}
         ${missing.length ? `<span class="quiet">${esc(missing.join(' · '))}.</span>` : ''}</p>
       <div class="chartwrap" id="chartwrap"></div>
     </div></div>`;
   renderChart(g);
 }
 
+// One synced timeline for every source. Dots are real observations; lines between dots are
+// interpolated; a dashed segment means a gap with no observation for over 90 minutes.
+const RANGES = {'6h':6, '24h':24, '48h':48, '7d':168};
 function renderChart(g){
   const wrap = $('#chartwrap');
-  if (!g.pm?.history?.length) { wrap.innerHTML = '<p class="quiet">No Polymarket price history for this fixture.</p>'; return; }
-  const all = g.pm.history;
-  const tEnd = all[all.length - 1][0];
-  const span = {'24h':24, '48h':48}[state.range];
-  const pts = span ? all.filter(p => p[0] >= tEnd - span * 3600) : all;
-  if (pts.length < 2) { wrap.innerHTML = '<p class="quiet">Not enough price history yet.</p>'; return; }
-  const W = 760, H = 210, P = {l:40, r:128, t:22, b:24};
-  const t0 = pts[0][0], t1 = Math.max(tEnd, t0 + 1);
-  const refs = [];
-  if (g.book) { if (g.book.homeOpen != null) refs.push({v:g.book.homeOpen, c:'var(--book)', dash:true, t:`${g.book.provider} opening ${pct(g.book.homeOpen)}`});
-                refs.push({v:g.book.homeNow, c:'var(--book)', dash:false, t:`${g.book.provider} now ${pct(g.book.homeNow)}`}); }
-  if (g.kalshi?.homeNow != null) refs.push({v:g.kalshi.homeNow, c:'var(--kal)', dash:true, t:`Kalshi now ${pct(g.kalshi.homeNow)}`});
-  const vals = pts.map(p => p[1]).concat(refs.map(r => r.v));
+  const SER = [
+    {k:'pm', name:'Polymarket', col:'var(--pm)', pts:(g.pm?.history || []).map(p => [p[0], p[1]]), note:'trades, every 30 min'},
+    {k:'book', name:g.book?.provider || 'DraftKings', col:'var(--book)', pts:(g.series || []).filter(r => r[2] != null).map(r => [r[0], r[2]]), note:'collector snapshots'},
+    {k:'kal', name:'Kalshi', col:'var(--kal)', pts:(g.series || []).filter(r => r[3] != null).map(r => [r[0], r[3]]), note:'bid-ask mid, collector snapshots'},
+  ];
+  // current quotes with no history yet still get a single observed dot
+  if (g.book && !SER[1].pts.length) SER[1].pts = [[Date.parse(state.data.generated) / 1000, g.book.homeNow]];
+  if (g.kalshi && !SER[2].pts.length) SER[2].pts = [[Date.parse(state.data.generated) / 1000, g.kalshi.homeNow]];
+  const allPts = SER.flatMap(s => s.pts);
+  if (allPts.length < 2) { wrap.innerHTML = '<p class="quiet">No price history for this fixture yet.</p>'; return; }
+  const tEnd = Math.max(...allPts.map(p => p[0]));
+  const tStart = tEnd - RANGES[state.range] * 3600;
+  SER.forEach(s => s.view = s.pts.filter(p => p[0] >= tStart));
+  const vis = SER.filter(s => s.view.length);
+  const W = 760, H = 230, P = {l:40, r:16, t:22, b:24};
+  const t0 = Math.max(tStart, Math.min(...vis.flatMap(s => s.view.map(p => p[0])))), t1 = Math.max(tEnd, t0 + 1);
+  const vals = vis.flatMap(s => s.view.map(p => p[1]));
+  if (g.book?.homeOpen != null) vals.push(g.book.homeOpen);
   let lo = Math.max(0, Math.min(...vals) - .04), hi = Math.min(1, Math.max(...vals) + .04);
   if (hi - lo < .16) { const m = (hi + lo) / 2; lo = Math.max(0, m - .08); hi = Math.min(1, m + .08); }
   const x = t => P.l + (t - t0) / (t1 - t0) * (W - P.l - P.r);
@@ -522,58 +538,58 @@ function renderChart(g){
     const v = lo + (hi - lo) * i / 4;
     svg += `<line x1="${P.l}" x2="${W - P.r}" y1="${y(v)}" y2="${y(v)}" stroke="#E3E8ED"/><text x="${P.l - 8}" y="${y(v) + 4}" text-anchor="end" fill="#77849A" font-size="11">${Math.round(v * 100)}%</text>`;
   }
-  const step = (t1 - t0) > 3 * 86400 ? 86400 : 6 * 3600;
+  const span = t1 - t0, step = span > 3 * 86400 ? 86400 : span > 30 * 3600 ? 6 * 3600 : span > 8 * 3600 ? 3 * 3600 : 3600;
   for (let t = Math.ceil(t0 / step) * step; t < t1; t += step) {
     const d = new Date(t * 1000);
     const lab = step === 86400 ? d.toLocaleDateString([], {weekday:'short', day:'numeric'}) : d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
     svg += `<text x="${x(t)}" y="${H - 6}" text-anchor="middle" fill="#77849A" font-size="11">${lab}</text>`;
   }
-  // suspicious window
   const jr = g.reasons.find(r => r.code === 'pm_jump');
   if (jr?.at && jr.at - 7200 >= t0) {
     const xa = x(jr.at - 7200), xb = x(jr.at);
-    const hm = new Date(jr.at * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
     svg += `<rect x="${xa}" y="${P.t}" width="${Math.max(4, xb - xa)}" height="${H - P.t - P.b}" fill="#F5C400" opacity=".16"/>
-      <line x1="${xa}" x2="${xa}" y1="${P.t}" y2="${H - P.b}" stroke="#B38F00" stroke-width="1"/>
-      <line x1="${xb}" x2="${xb}" y1="${P.t}" y2="${H - P.b}" stroke="#B38F00" stroke-width="1"/>
-      <text x="${xb}" y="${P.t - 7}" text-anchor="end" fill="#7A6100" font-size="11.5" font-weight="600">${jr.pp.toFixed(1)}pp in 2h, ending ${hm}</text>`;
+      <line x1="${xa}" x2="${xa}" y1="${P.t}" y2="${H - P.b}" stroke="#B38F00"/><line x1="${xb}" x2="${xb}" y1="${P.t}" y2="${H - P.b}" stroke="#B38F00"/>
+      <text x="${xb}" y="${P.t - 7}" text-anchor="end" fill="#7A6100" font-size="11.5" font-weight="600">${jr.pp.toFixed(1)}pp in 2h, ending ${fmtT(jr.at)}</text>`;
   }
-  // kickoff
   if (g.kickoff && g.kickoff > t0 && g.kickoff <= t1)
-    svg += `<line x1="${x(g.kickoff)}" x2="${x(g.kickoff)}" y1="${P.t}" y2="${H - P.b}" stroke="#0F1B2D" stroke-dasharray="3 3"/><text x="${x(g.kickoff) - 5}" y="${P.t + 11}" text-anchor="end" fill="#0F1B2D" font-size="11">Kickoff</text>`;
-  // reference lines with direct labels (nudged apart)
-  const labs = refs.map(r => ({...r, ly:y(r.v)})).sort((a, b) => a.ly - b.ly);
-  for (let i = 1; i < labs.length; i++) if (labs[i].ly - labs[i - 1].ly < 14) labs[i].ly = labs[i - 1].ly + 14;
-  labs.forEach(r => {
-    svg += `<line x1="${P.l}" x2="${W - P.r}" y1="${y(r.v)}" y2="${y(r.v)}" stroke="${r.c}" stroke-width="1.5" ${r.dash ? 'stroke-dasharray="6 4"' : ''}/>
-      <text x="${W - P.r + 8}" y="${r.ly + 4}" fill="${r.c}" font-size="11.5" font-weight="600">${esc(r.t)}</text>`;
+    svg += `<line x1="${x(g.kickoff)}" x2="${x(g.kickoff)}" y1="${P.t}" y2="${H - P.b}" stroke="#0F1B2D" stroke-dasharray="3 3"/><text x="${x(g.kickoff) - 5}" y="${P.t + 11}" text-anchor="end" fill="#0F1B2D" font-size="11">${START[g.league]}</text>`;
+  if (g.book?.homeOpen != null)
+    svg += `<line x1="${P.l}" x2="${P.l + 18}" y1="${y(g.book.homeOpen)}" y2="${y(g.book.homeOpen)}" stroke="var(--book)" stroke-width="2"/><text x="${P.l + 22}" y="${y(g.book.homeOpen) + 4}" fill="var(--book)" font-size="11">opened ${pct(g.book.homeOpen)} (time unknown)</text>`;
+  (g.case?.events || []).filter(e => e.at >= t0 && e.at <= t1).forEach(e =>
+    svg += `<line x1="${x(e.at)}" x2="${x(e.at)}" y1="${H - P.b - 10}" y2="${H - P.b}" stroke="#0F1B2D" stroke-width="2"><title>${STATUS[e.status]} ${fmtT(e.at)}</title></line>`);
+  const GAP = 90 * 60;
+  vis.forEach(s => {
+    const v = s.view;
+    for (let i = 1; i < v.length; i++) {
+      const gap = v[i][0] - v[i - 1][0] > GAP;
+      svg += `<line x1="${x(v[i - 1][0])}" y1="${y(v[i - 1][1])}" x2="${x(v[i][0])}" y2="${y(v[i][1])}" stroke="${s.col}" stroke-width="${s.k === 'pm' ? 2.5 : 2}" ${gap ? 'stroke-dasharray="4 4" opacity=".6"' : ''}/>`;
+    }
+    const dots = s.k === 'pm' && v.length > 60 ? [v[v.length - 1]] : v;  // dense PM series: dot only the latest
+    dots.forEach(p => svg += `<circle cx="${x(p[0])}" cy="${y(p[1])}" r="${s.k === 'pm' ? 3.5 : 3}" fill="${s.col}"/>`);
   });
-  const path = pts.map((p, i) => (i ? 'L' : 'M') + x(p[0]).toFixed(1) + ' ' + y(p[1]).toFixed(1)).join(' ');
-  const last = pts[pts.length - 1];
-  svg += `<path d="${path}" fill="none" stroke="var(--pm)" stroke-width="2.5" stroke-linejoin="round"/>
-    <circle cx="${x(last[0])}" cy="${y(last[1])}" r="4" fill="var(--pm)"/>
-    <line id="cx" x1="0" x2="0" y1="${P.t}" y2="${H - P.b}" stroke="#46546A" opacity="0"/>
-    <circle id="cd" r="4.5" fill="#fff" stroke="var(--pm)" stroke-width="2" opacity="0"/>
+  svg += `<line id="cx" x1="0" x2="0" y1="${P.t}" y2="${H - P.b}" stroke="#46546A" opacity="0"/>
     <rect id="hit" x="${P.l}" y="${P.t}" width="${W - P.l - P.r}" height="${H - P.t - P.b}" fill="transparent"/>`;
 
-  wrap.innerHTML = `<div class="chart-h"><h4>Polymarket price for ${esc(g.home.name)}</h4>
-      <div class="seg" role="group" aria-label="Time range"><button data-r="24h" class="${state.range === '24h' ? 'on' : ''}">24 hours</button><button data-r="48h" class="${state.range === '48h' ? 'on' : ''}">48 hours</button><button data-r="7d" class="${state.range === '7d' ? 'on' : ''}">7 days</button></div></div>
-    <svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Polymarket price history with bookmaker and Kalshi reference lines">${svg}</svg>
-    <p class="caption" id="readout">Blue line: Polymarket's price history. Flat lines: the other markets' current prices only, not their history.${jr ? ' Yellow band: the sharpest two-hour move.' : ''} Hover to read a price.</p>`;
+  const legend = SER.map(s => `<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px"><i style="width:10px;height:10px;border-radius:50%;background:${s.col}"></i>${esc(s.name)} <span class="quiet">${s.view?.length ? `${s.view.length} observation${s.view.length > 1 ? 's' : ''}, ${s.note}` : 'no observations in this range'}</span></span>`).join('');
+  wrap.innerHTML = `<div class="chart-h"><h4>${esc(g.home.name)} win probability, all markets</h4>
+      <div class="seg" role="group" aria-label="Time range">${Object.keys(RANGES).map(r => `<button data-r="${r}" class="${state.range === r ? 'on' : ''}">${r === '7d' ? '7 days' : r.replace('h', ' hours')}</button>`).join('')}</div></div>
+    <div class="caption" style="margin:0 0 6px">${legend}</div>
+    <svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Win probability over time for each market">${svg}</svg>
+    <p class="caption" id="readout">Dots are observed prices; solid lines between them are interpolated; dashed lines cross gaps of over 90 minutes with no observation.${jr ? ' Yellow band: the sharpest two-hour move.' : ''} Ticks on the axis are analyst decisions. Volume history and news are not available from these sources.</p>`;
   $$('#chartwrap .seg button').forEach(b => b.onclick = () => { state.range = b.dataset.r; renderChart(g); });
-  const svgEl = wrap.querySelector('svg'), hit = wrap.querySelector('#hit');
+  const svgEl = wrap.querySelector('svg'), hit = wrap.querySelector('#hit'), cx = wrap.querySelector('#cx');
+  const near = (v, t) => v.length ? v.reduce((a, q) => Math.abs(q[0] - t) < Math.abs(a[0] - t) ? q : a) : null;
   hit.addEventListener('mousemove', e => {
     const r = svgEl.getBoundingClientRect();
-    const sx = (e.clientX - r.left) / r.width * W;
-    const t = t0 + (sx - P.l) / (W - P.l - P.r) * (t1 - t0);
-    const p = pts.reduce((a, q) => Math.abs(q[0] - t) < Math.abs(a[0] - t) ? q : a);
-    const cx = wrap.querySelector('#cx'), cd = wrap.querySelector('#cd');
-    cx.setAttribute('x1', x(p[0])); cx.setAttribute('x2', x(p[0])); cx.setAttribute('opacity', '.5');
-    cd.setAttribute('cx', x(p[0])); cd.setAttribute('cy', y(p[1])); cd.setAttribute('opacity', '1');
-    $('#readout').innerHTML = `<b>${pct(p[1])}</b> on Polymarket at ${dayTime(p[0] * 1000)}`;
+    const t = t0 + ((e.clientX - r.left) / r.width * W - P.l) / (W - P.l - P.r) * (t1 - t0);
+    cx.setAttribute('x1', x(t)); cx.setAttribute('x2', x(t)); cx.setAttribute('opacity', '.5');
+    $('#readout').innerHTML = `<b>${fmtT(t)}</b> · ` + vis.map(s => {
+      const p = near(s.view, t);
+      return p && Math.abs(p[0] - t) <= 30 * 60 ? `${esc(s.name)} <b>${pct(p[1])}</b> <span class="quiet">observed ${fmtT(p[0])}</span>` : `${esc(s.name)} <span class="quiet">no observation within 30 min</span>`;
+    }).join(' · ');
   });
   const capText = $('#readout').innerHTML;
-  hit.addEventListener('mouseleave', () => { $('#readout').innerHTML = capText; wrap.querySelector('#cx').setAttribute('opacity', '0'); wrap.querySelector('#cd').setAttribute('opacity', '0'); });
+  hit.addEventListener('mouseleave', () => { $('#readout').innerHTML = capText; cx.setAttribute('opacity', '0'); });
 }
 
 // ----- case column -----
@@ -583,6 +599,8 @@ function caseSummary(g){
   if (codes.some(c => ['book_move', 'pm_move', 'pm_jump'].includes(c))) { benign.add('Injury or lineup news'); benign.add('A late starter confirmation'); }
   if (codes.includes('thin') || (g.liquidityWeight ?? 1) < 0.6) benign.add('A few large orders in a thin market');
   if (codes.some(c => ['divergence', 'kalshi_gap'].includes(c))) { benign.add('A stale quote on one venue'); benign.add('Different user bases pricing the game differently'); }
+  benign.add('Public news or official team announcement');
+  if (g.league === 'nfl') benign.add('Weather conditions');
   if (!benign.size) benign.add('Routine market adjustment');
   const checks = ['Compare team news timestamps with the move'];
   if (g.pm) checks.push('Check Polymarket trades around the jump');
@@ -610,6 +628,11 @@ function timeline(g){
 
 function explanation(g){
   const st = status(g), last = (g.case?.events || []).slice(-1)[0];
+  const a = Object.values(explains[g.caseId] || {});
+  if (a.includes('confirmed')) return ['Explained', 'q-high'];
+  if (st === 'escalated') return ['Unexplained', 'q-low'];
+  if (a.includes('possible')) return ['Possibly explained', 'q-medium'];
+  if (a.length && a.every(v => v === 'none')) return ['No explanation found', 'q-low'];
   if (st === 'dismissed') return last?.rationale ? ['Explained', 'q-high'] : ['Dismissed, no reason', 'q-medium'];
   if (st === 'escalated') return ['Unexplained', 'q-low'];
   return g.level === 'normal' ? ['Not needed', 'q-high'] : ['Pending', 'q-medium'];
@@ -619,7 +642,7 @@ async function decide(g, action, note){
   const sig = signals(g);
   const snapshot = {league:g.league, fixture:`${g.away.displayName} @ ${g.home.displayName}`, start:g.start,
     score:g.score, level:g.level, signals:sig.map(r => ({...r, text:reasonText(r, g)})),
-    evidence:{dataQuality:g.dataQuality, polymarket:g.pm ? {homeNow:g.pm.homeNow, url:g.pm.url, observedAt:g.pm.observedAt, lastTradeAt:g.pm.lastTradeAt} : null,
+    evidence:{dataQuality:g.dataQuality, explanations:explains[g.caseId] || {}, explanationStatus:explanation(g)[0], polymarket:g.pm ? {homeNow:g.pm.homeNow, url:g.pm.url, observedAt:g.pm.observedAt, lastTradeAt:g.pm.lastTradeAt} : null,
       book:g.book ? {provider:g.book.provider, homeNow:g.book.homeNow, homeOpen:g.book.homeOpen, rawHome:g.book.rawHome, rawAway:g.book.rawAway} : null,
       kalshi:g.kalshi ? {homeNow:g.kalshi.homeNow, bid:g.kalshi.bid, ask:g.kalshi.ask, url:g.kalshi.url} : null}};
   const r = await fetch('/api/decision', {method:'POST', headers:{'Content-Type':'application/json'},
@@ -639,13 +662,13 @@ function renderCase(g){
     : g.level === 'watch' ? 'Prices moved enough to deserve a two-minute look.'
     : 'Prices look consistent across markets. No review needed.';
   const sigItem = r => `<div class="it"><span class="t">${LABELS[r.code]}${r.correlated ? ' <span class="info">(overlaps, half weight)</span>' : ''}</span><span class="n">+${Math.round(r.pts)}</span>
-      <span class="bar2"><i style="width:${Math.min(100, r.pts / Math.max(g.score, 1) * 100)}%"></i></span><span class="s">${esc(reasonText(r, g))}</span></div>`;
+      <span class="bar2"><i style="width:${Math.min(100, r.pts / Math.max(g.score, 1) * 100)}%"></i></span><span class="s">${esc(reasonText(r, g))}<br><span class="info">${THRESH[r.code] || ''}${r.code !== 'book_move' && r.code !== 'kalshi_gap' && g.pm ? ' · source Polymarket' : ''}</span></span></div>`;
   const draft = state.drafts[g.id] ?? '';
   $('#case').innerHTML = `<div class="sheet"><div class="case-scroll">
-    <div class="verdict"><div class="bigcard ${g.level}" aria-hidden="true">${g.score}</div>
+    <div class="verdict"><div class="bigcard ${g.level}" aria-hidden="true" title="Review priority ${g.score}/100">${g.score}</div>
       <div><h2>${LEVEL[g.level]}</h2><p>${verdictText}</p></div></div>
     <div class="trio">
-      <div><small>Review priority</small><b>${g.score}</b></div>
+      <div><small>Review priority</small><b>${g.score}<span class="info" style="font:400 12px var(--body)">/100</span></b></div>
       <div title="${esc(dq.issues.join('\n'))}"><small>Data quality</small><b class="q-${dq.grade}">${{high:'High', medium:'Medium', low:'Low', none:'None'}[dq.grade]}</b></div>
       <div><small>Explanation</small><b class="${exCls}">${ex}</b></div></div>
     <p class="info">Priority orders the queue. It is not a probability of wrongdoing.</p>
@@ -661,7 +684,10 @@ function renderCase(g){
 
     ${g.level !== 'normal' || st !== 'new' ? `
     <details ${g.level !== 'normal' ? 'open' : ''}><summary>Evidence timeline</summary><ul class="log tl">${timeline(g)}</ul></details>
-    <details><summary>Potential legitimate explanations</summary><ul style="margin-top:6px">${s.benign.map(e => `<li>${esc(e)}</li>`).join('')}</ul></details>
+    <h4>Possible legitimate explanations</h4>
+    <table class="dt expl"><tbody>${s.benign.map(e => `<tr><td style="padding:5px 8px 5px 0">${esc(e)}</td><td style="padding:5px 0;width:1%">
+      <select class="btn" style="padding:3px 6px;font-size:12.5px" data-e="${esc(e)}" aria-label="Assessment for ${esc(e)}">${Object.entries(ASSESS).map(([k, l]) =>
+        `<option value="${k}" ${((explains[g.caseId] || {})[e] || 'unchecked') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></td></tr>`).join('')}</tbody></table>
     <h4>Investigation checklist</h4>
     <ul class="checks">${s.checks.map((c, i) => `<li><label><input type="checkbox" data-c="${i}" ${ck[i] ? 'checked' : ''}> ${esc(c)}</label></li>`).join('')}</ul>` : ''}
     </div>
@@ -678,6 +704,11 @@ function renderCase(g){
   </div>`;
 
   $('#rvNote').oninput = e => { state.drafts[g.id] = e.target.value; };
+  $$('#case .expl select').forEach(sel => sel.onchange = () => {
+    const m = explains[g.caseId] ||= {};
+    if (sel.value === 'unchecked') delete m[sel.dataset.e]; else m[sel.dataset.e] = sel.value;
+    saveExplains(); renderCase(g);
+  });
   $$('#case .checks input').forEach(cb => cb.onchange = async () => {
     (checks[g.caseId] ||= {})[cb.dataset.c] = cb.checked; saveChecks();
     if (cb.checked && status(g) === 'new') {

@@ -92,6 +92,7 @@ def build_live(league: str, now=None, db=None, persist=True):
         storage.record_snapshot(games, t=now, path=db)
         for g in games:
             g["signalHistory"] = storage.signal_history(g["caseId"], path=db)
+            g["series"] = storage.series(g["caseId"], now=now, path=db)
     games.sort(key=lambda g: (-g["score"], g["start"]))
     return {
         "league": league, "generated": datetime.fromtimestamp(now, timezone.utc).isoformat(), "games": games,
